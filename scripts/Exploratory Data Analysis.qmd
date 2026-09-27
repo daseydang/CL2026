@@ -1,0 +1,320 @@
+---
+title: "Data Exploration"
+format: html
+editor: visual
+---
+
+## Initial Data Exploration
+
+Before conducting inferential analyses, I will examine the structure and characteristics of the available data. The purpose of this step is to understand the number of students and observations represented in each dataset, assess the distribution of observed affective states and learning performance, and determine how successfully BROMP observations can be linked to learning attempts.
+
+### Load Required Packages
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+```
+
+### Import the Data
+
+```{python}
+bromp = pd.read_excel("data/Anonymized BROMP.xlsx")
+
+attempt = pd.read_excel("data/attempt-data-anon.xlsx")
+
+aplse = pd.read_excel("data/aplse-data-anon.xlsx")
+
+caliper = pd.read_excel("data/caliper-bromp-data-anon-cleaned.xlsx")
+```
+
+### Inspect the Datasets
+
+Before beginning the analysis, I will examine the dimensions and variables available in each dataset.
+
+```{python}
+print("BROMP:", bromp.shape)
+print("Attempt:", attempt.shape)
+print("APLSE:", aplse.shape)
+print("Caliper:", caliper.shape)
+```
+
+```{python}
+print("BROMP columns:")
+print(bromp.columns.tolist())
+
+print("\nAttempt columns:")
+print(attempt.columns.tolist())
+
+print("\nAPLSE columns:")
+print(aplse.columns.tolist())
+
+print("\nCaliper columns:")
+print(caliper.columns.tolist())
+```
+
+### 1. Number of Students Represented in Each Dataset
+
+I will examine the number of unique students represented in each dataset.
+
+```{python}
+print("BROMP students:", bromp["anon_student_id"].nunique())
+print("Attempt students:", attempt["USERID_ANON"].nunique())
+print("APLSE students:", aplse["USERID_ANON"].nunique())
+print("Caliper students:", caliper["student-id-anon"].nunique())
+```
+
+### 2. Number of BROMP Observations per Student
+
+Because BROMP data contain repeated observations of students, I will examine how many observations each student contributes.
+
+```{python}
+bromp_counts = (
+    bromp
+    .groupby("anon_student_id")
+    .size()
+    .reset_index(name="n_observations")
+)
+
+bromp_counts.describe()
+```
+
+I will also visualize the distribution of observations across students.
+
+```{python}
+plt.figure(figsize=(8, 5))
+
+plt.hist(
+    bromp_counts["n_observations"],
+    bins=range(
+        bromp_counts["n_observations"].min(),
+        bromp_counts["n_observations"].max() + 2
+    )
+)
+
+plt.xlabel("Number of BROMP observations")
+plt.ylabel("Number of students")
+plt.title("Number of BROMP Observations per Student")
+plt.show()
+```
+
+### 3. Frequency of Each Observed Affective State
+
+Next, I will examine the frequency of each observed affective state.
+
+```{python}
+affect_counts = (
+    bromp["affect"]
+    .value_counts(dropna=False)
+    .reset_index()
+)
+
+affect_counts.columns = ["affect", "n"]
+
+affect_counts
+```
+
+I will visualize the distribution of affective states.
+
+```{python}
+plt.figure(figsize=(8, 5))
+
+plt.bar(
+    affect_counts["affect"].astype(str),
+    affect_counts["n"]
+)
+
+plt.xlabel("Observed affective state")
+plt.ylabel("Number of observations")
+plt.title("Frequency of Observed Affective States")
+plt.xticks(rotation=45, ha="right")
+plt.tight_layout()
+plt.show()
+```
+
+Very rare affective states will be identified before inferential analysis. If some categories contain very few observations, I will evaluate whether they should be excluded or combined with other theoretically appropriate categories.
+
+### 4. Completed Attempts with Available Scores
+
+The Attempt dataset contains information about individual learning attempts, including completion status and scores. I will first examine the available attempt statuses.
+
+```{python}
+attempt["STATUS"].value_counts(dropna=False)
+```
+
+I will then identify completed attempts with available scores and score maximums.
+
+```{python}
+attempt_completed = attempt[
+    attempt["COMPLETEDON"].notna()
+    & attempt["SCORE"].notna()
+    & attempt["SCOREMAXIMUM"].notna()
+].copy()
+```
+
+```{python}
+print("Completed attempts with available scores:",
+      len(attempt_completed))
+
+print("Students represented:",
+      attempt_completed["USERID_ANON"].nunique())
+```
+
+Because score maximums may differ across attempts, I will calculate performance as the proportion of available points earned.
+
+```{python}
+attempt_completed["performance"] = (
+    attempt_completed["SCORE"]
+    / attempt_completed["SCOREMAXIMUM"]
+)
+```
+
+### 5. Distribution of Learning Performance
+
+I will examine the distribution of the performance measure before selecting an inferential model.
+
+```{python}
+attempt_completed["performance"].describe()
+```
+
+I will also visualize the distribution.
+
+```{python}
+plt.figure(figsize=(8, 5))
+
+plt.hist(
+    attempt_completed["performance"],
+    bins=20
+)
+
+plt.xlabel("Proportion of points earned")
+plt.ylabel("Number of attempts")
+plt.title("Distribution of Learning Performance")
+plt.show()
+```
+
+### 6. Linking BROMP Observations to Learning Attempts
+
+A central step in the analysis is determining which learning activity corresponds most closely to each BROMP observation.
+
+BROMP observations contain a session start time (`ntp_time`) and an offset from the beginning of the observation session (`msoffsetfromstart`). I first reconstruct the timestamp of each observation.
+
+```{python}
+bromp["ntp_time"] = pd.to_datetime(bromp["ntp_time"])
+
+bromp["bromp_time"] = (
+    bromp["ntp_time"]
+    + pd.to_timedelta(
+        bromp["msoffsetfromstart"],
+        unit="ms"
+    )
+)
+```
+
+```{python}
+bromp[
+    [
+        "anon_student_id",
+        "ntp_time",
+        "msoffsetfromstart",
+        "bromp_time",
+        "affect"
+    ]
+].head(10)
+```
+
+The Caliper dataset contains detailed platform events with timestamps, student identifiers, stream names, and attempt identifiers. Caliper timestamps are stored in UTC.
+
+```{python}
+caliper["event_time_utc"] = pd.to_datetime(
+    caliper["event-time"],
+    utc=True
+)
+```
+
+Inspection of corresponding BROMP and Caliper activity indicated that the BROMP timestamps align with Caliper events after adding four hours to the reconstructed BROMP time. For example, for one student, a four-hour adjustment resulted in a nearest Caliper event approximately 29 seconds from the BROMP observation, whereas five- and six-hour adjustments resulted in differences of approximately 38 minutes and 98 minutes, respectively.
+
+Therefore, an adjusted BROMP timestamp is created for temporal matching.
+
+```{python}
+bromp["bromp_time_utc"] = (
+    bromp["bromp_time"]
+    + pd.Timedelta(hours=4)
+).dt.tz_localize("UTC")
+```
+
+```{python}
+bromp[
+    [
+        "anon_student_id",
+        "bromp_time",
+        "bromp_time_utc",
+        "affect"
+    ]
+].head(10)
+```
+
+The Caliper data contain a substantial number of events with attempt identifiers, which may allow BROMP observations to be connected to Attempt data.
+
+```{python}
+print(
+    "Caliper events with attempt IDs:",
+    caliper["attempt-id"].notna().sum()
+)
+
+print(
+    "Unique Caliper attempt IDs:",
+    caliper["attempt-id"].nunique()
+)
+```
+
+The next step will be to match each BROMP observation to the temporally nearest Caliper event for the same student. The time difference between the BROMP observation and matched Caliper event will be retained so that match quality can be evaluated before constructing the final analytic dataset.
+
+Not every BROMP observation is expected to correspond to a completed learning attempt.
+
+### 8. Performance Across Stream Types
+
+The Attempt dataset does not contain a variable explicitly named `stream`. However, the `FRIENDLYNAME` variable identifies the learning activity and begins with either `LessonStream` or `SkillStream`.
+
+I will extract this broader stream type to examine whether learning performance differs substantially between LessonStream and SkillStream attempts.
+
+```{python}
+attempt_completed["stream_type"] = (
+    attempt_completed["FRIENDLYNAME"]
+    .str.extract(r"^(LessonStream|SkillStream)")
+)
+```
+
+```{python}
+attempt_completed["stream_type"].value_counts(
+    dropna=False
+)
+```
+
+I will summarize performance separately for the two stream types.
+
+```{python}
+attempt_completed.groupby(
+    "stream_type"
+)["performance"].agg(
+    ["count", "mean", "std", "median"]
+)
+```
+
+The initial descriptive results indicate that performance is similar across the two stream types. Mean performance is approximately 0.55 for LessonStream attempts and 0.58 for SkillStream attempts. Therefore, stream type does not appear to be a major source of performance differences at this stage, although it may still be considered as a potential grouping or control variable in later analyses.
+
+### Summary of Initial Exploration
+
+The initial exploration is being used to determine:
+
+* the number of students represented in each dataset;
+* the number of BROMP observations contributed by each student;
+* the frequency and distribution of observed affective states;
+* the number of completed attempts with usable performance scores;
+* the distribution of learning performance;
+* how BROMP observation timestamps correspond to Caliper platform activity;
+* the number and quality of BROMP-to-Caliper temporal matches;
+* the extent of repeated observations and attempts within students; and
+* whether broad stream type is associated with substantial differences in performance.
+
+The next step is to match each BROMP observation to the nearest Caliper event for the same student and evaluate the distribution of time differences between matched observations. These matches can then be used to connect observed affective states with corresponding learning attempts and performance outcomes.
